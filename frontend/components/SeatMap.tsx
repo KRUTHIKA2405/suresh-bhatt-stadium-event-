@@ -14,10 +14,26 @@ type Props = {
   onReserve: (seatNumber: string) => void;
 };
 
-const statusClass = (status: string) => {
+export function colorForName(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 65%, 42%)`;
+}
+
+const seatClass = (status: string) => {
   if (status === "reserved") return "seat reserved";
   if (status === "blocked") return "seat blocked";
   return "seat free";
+};
+
+const seatStyle = (seat: Seat) => {
+  if (seat.status === "reserved" && seat.reserved_by) {
+    return { background: colorForName(seat.reserved_by), color: "#fff" };
+  }
+  return undefined;
 };
 
 export default function SeatMap({ groups, onReserve }: Props) {
@@ -30,7 +46,8 @@ export default function SeatMap({ groups, onReserve }: Props) {
             {seats.map((seat) => (
               <button
                 key={seat.id}
-                className={statusClass(seat.status)}
+                className={seatClass(seat.status)}
+                style={seatStyle(seat)}
                 disabled={seat.status !== "free"}
                 onClick={() => onReserve(seat.seat_number)}
               >

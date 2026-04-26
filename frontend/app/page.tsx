@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { io } from "socket.io-client";
-import SeatMap from "../components/SeatMap";
+import { io, type Socket } from "socket.io-client";
+import SeatMap, { colorForName } from "../components/SeatMap";
 
 type Seat = {
   id: number;
@@ -13,25 +13,36 @@ type Seat = {
   reserved_by: string | null;
 };
 
+function getBackendUrl(): string {
+  const envUrl = (process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
+  if (envUrl) return envUrl.replace(/\/$/, "");
+  if (typeof window === "undefined") return "";
+  return `${window.location.protocol}//${window.location.hostname}:8000`;
+}
+
 export default function HomePage() {
   const [seats, setSeats] = useState<Seat[]>([]);
   const [selectedName, setSelectedName] = useState("volunteer-laptop-1");
   const [status, setStatus] = useState("Connecting...");
 
   useEffect(() => {
-    fetch("/api/seats")
+    const backendUrl = getBackendUrl();
+
+    fetch(`${backendUrl}/seats`, { cache: "no-store" })
       .then((res) => res.json())
       .then(setSeats)
       .catch(() => setStatus("Unable to load seat data"));
 
-    const client = io({ path: "/socket.io", transports: ["websocket", "polling"] });
+    const client: Socket = io(backendUrl, {
+      transports: ["websocket", "polling"],
+    });
 
     client.on("connect", () => {
-      setStatus("Connected to backend");
+      setStatus(`Connected to ${backendUrl}`);
       client.emit("join_room", { room: "stadium" });
     });
 
-    client.on("seat_update", (payload) => {
+    client.on("seat_update", (payload: { seat_number: string; status: string; reserved_by: string | null }) => {
       setSeats((current) =>
         current.map((seat) =>
           seat.seat_number === payload.seat_number
@@ -39,6 +50,10 @@ export default function HomePage() {
             : seat
         )
       );
+    });
+
+    client.on("connect_error", (err) => {
+      setStatus(`Connect error: ${err.message}`);
     });
 
     client.on("disconnect", () => {
@@ -59,12 +74,22 @@ export default function HomePage() {
     }, {});
   }, [seats]);
 
-  const handleReserve = async (seatNumber: string) => {
-    const response = await fetch(`/api/reserve/${seatNumber}?reserved_by=${encodeURIComponent(selectedName)}`, {
-      method: "POST",
+  const bookers = useMemo(() => {
+    const set = new Set<string>();
+    seats.forEach((s) => {
+      if (s.status === "reserved" && s.reserved_by) set.add(s.reserved_by);
     });
+    return [...set].sort();
+  }, [seats]);
+
+  const handleReserve = async (seatNumber: string) => {
+    const backendUrl = getBackendUrl();
+    const response = await fetch(
+      `${backendUrl}/reserve/${encodeURIComponent(seatNumber)}?reserved_by=${encodeURIComponent(selectedName)}`,
+      { method: "POST", cache: "no-store" }
+    );
     if (!response.ok) {
-      const body = await response.json();
+      const body = await response.json().catch(() => ({}));
       setStatus(`Reservation failed: ${body.detail || response.statusText}`);
       return;
     }
@@ -84,6 +109,18 @@ export default function HomePage() {
             Laptop name:
             <input value={selectedName} onChange={(event) => setSelectedName(event.target.value)} />
           </label>
+        </div>
+        <div className="legend">
+          <span className="legend-item">
+            <span className="legend-swatch legend-swatch-free" />
+            Available
+          </span>
+          {bookers.map((name) => (
+            <span key={name} className="legend-item">
+              <span className="legend-swatch" style={{ background: colorForName(name) }} />
+              {name}
+            </span>
+          ))}
         </div>
       </header>
       <SeatMap groups={grouped} onReserve={handleReserve} />
